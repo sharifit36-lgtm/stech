@@ -1,0 +1,97 @@
+from flask import Flask, render_template_string, request, redirect, url_for, session
+import sqlite3
+import hashlib
+
+app = Flask(__name__)
+app.secret_key = 'secret123'
+
+conn = sqlite3.connect('shop.db', check_same_thread=False)
+c = conn.cursor()
+
+# Tables
+c.execute('CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name TEXT, price INTEGER)')
+c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)')
+conn.commit()
+
+# Default admin
+admin_user = 'admin'
+admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
+c.execute('SELECT * FROM users WHERE username=?', (admin_user,))
+if not c.fetchone():
+    c.execute('INSERT INTO users (username,password) VALUES (?,?)', (admin_user, admin_pass))
+    conn.commit()
+
+# Sample products
+c.execute('SELECT COUNT(*) FROM products')
+if c.fetchone()[0] == 0:
+    c.executemany('INSERT INTO products (name, price) VALUES (?,?)', [
+        ('Keyboard', 1200),
+        ('Mouse', 500)
+    ])
+    conn.commit()
+
+# Templates
+home_html = """
+<h1>IT Shop</h1>
+<a href='/cart'>Cart</a> | <a href='/admin'>Admin</a>
+<hr>
+{% for p in products %}
+<p>{{p[1]}} - {{p[2]}} BDT <a href='/add/{{p[0]}}'>Add</a></p>
+{% endfor %}
+"""
+
+admin_html = """
+<h2>Admin Panel</h2>
+<form method='post'>
+<input name='name' placeholder='Product name'>
+<input name='price' placeholder='Price'>
+<button>Add</button>
+</form>
+<hr>
+{% for p in products %}
+<p>{{p[1]}} - {{p[2]}}</p>
+{% endfor %}
+"""
+
+# Routes
+@app.route('/')
+def home():
+    products = c.execute('SELECT * FROM products').fetchall()
+    return render_template_string(home_html, products=products)
+
+@app.route('/add/<int:id>')
+def add(id):
+    session.setdefault('cart', []).append(id)
+    session.modified = True
+    return redirect('/')
+
+@app.route('/cart')
+def cart():
+    ids = session.get('cart', [])
+    items = []
+    total = 0
+    for i in ids:
+        p = c.execute('SELECT * FROM products WHERE id=?', (i,)).fetchone()
+        if p:
+            items.append(p)
+            total += p[2]
+    return f"Items: {items} <br>Total: {total} BDT <br><a href='/checkout'>Checkout</a>"
+
+@app.route('/checkout')
+def checkout():
+    session.pop('cart', None)
+    return 'Order Placed (Demo Payment)'
+
+@app.route('/admin', methods=['GET','POST'])
+def admin():
+    if request.method == 'POST':
+        name = request.form['name']
+        price = request.form['price']
+        c.execute('INSERT INTO products (name,price) VALUES (?,?)', (name, price))
+        conn.commit()
+        return redirect('/admin')
+    products = c.execute('SELECT * FROM products').fetchall()
+    return render_template_string(admin_html, products=products)
+
+if __name__ == '__main__':
+    app.run(debug=True)
